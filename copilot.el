@@ -92,7 +92,7 @@ performance."
   :group 'copilot
   :type 'string)
 
-(defcustom copilot-server-args nil
+(defcustom copilot-server-args '("--stdio")
   "Additional arguments to pass to the Copilot server."
   :group 'copilot
   :type '(repeat string))
@@ -117,7 +117,9 @@ find indentation offset."
   :type 'boolean)
 
 (defcustom copilot-indentation-alist
-  (append '((latex-mode tex-indent-basic)
+  (append '((emacs-lisp-mode lisp-indent-offset)
+            (latex-mode tex-indent-basic)
+            (lisp-mode lisp-indent-offset)
             (nxml-mode nxml-child-indent)
             (python-mode python-indent py-indent-offset python-indent-offset)
             (python-ts-mode python-indent py-indent-offset python-indent-offset)
@@ -137,14 +139,10 @@ find indentation offset."
   :type 'directory
   :group 'copilot)
 
-(defconst copilot--server-executable
-  (if (eq system-type 'windows-nt)
-      (f-join copilot-install-dir "node_modules" "copilot-node-server"
-              "bin" "copilot-node-server")
-    (f-join copilot-install-dir "bin" "copilot-node-server"))
+(defvar copilot--server-executable nil
   "The dist directory containing agent.js file.")
 
-(defcustom copilot-version "1.14.0"
+(defcustom copilot-version "1.27.0"
   "Copilot version.
 
 The default value is the preferred version and ensures functionality.
@@ -296,7 +294,7 @@ SUCCESS-FN is the CALLBACK."
                   :process (make-process :name "copilot agent"
                                          :command (append
                                                    (list copilot-node-executable
-                                                         copilot--server-executable)
+                                                         (copilot-server-executable))
                                                    copilot-server-args)
                                          :coding 'utf-8-emacs-unix
                                          :connection-type 'pipe
@@ -477,10 +475,8 @@ automatically, browse to %s." user-code verification-uri))
                                 (symbol-value s))))
                        indent-spec))
              ((functionp indent-spec) ; editorconfig 0.11.0+
-              (cl-some (lambda (pair)
-                         (when (numberp (cdr pair))
-                           (cdr pair)))
-                       (funcall indent-spec tab-width)))))))
+              ;; This points to a setter, which do not call
+              nil)))))
       (progn
         (when (and
                (not copilot-indent-offset-warning-disable)
@@ -488,7 +484,7 @@ automatically, browse to %s." user-code verification-uri))
           (display-warning '(copilot copilot-no-mode-indent)
                            "copilot--infer-indentation-offset found no mode-specific indentation offset.")
           (setq-local copilot--indent-warning-printed-p t))
-        tab-width)))
+        standard-indent)))
 
 (defun copilot--get-relative-path ()
   "Get relative path to current buffer."
@@ -566,7 +562,7 @@ automatically, browse to %s." user-code verification-uri))
   (save-restriction
     (widen)
     (list :version copilot--doc-version
-          :tabSize (copilot--infer-indentation-offset)
+          :tabSize tab-width
           :indentSize (copilot--infer-indentation-offset)
           :insertSpaces (if indent-tabs-mode :json-false t)
           :path (buffer-file-name)
@@ -609,7 +605,7 @@ automatically, browse to %s." user-code verification-uri))
                    (copilot--show-completion completion))))))))
 
 (defsubst copilot--overlay-visible ()
-  "Return whether the `copilot--overlay' is avaiable."
+  "Return whether the `copilot--overlay' is available."
   (and (overlayp copilot--overlay)
        (overlay-buffer copilot--overlay)))
 
@@ -1034,6 +1030,26 @@ in `post-command-hook'."
              (when (re-search-forward "\"version\": \"\\([0-9]+\\.[0-9]+\\.[0-9]+\\)\"" nil t)
                (match-string 1))))))
      possible-paths)))
+
+(defun copilot-server-executable ()
+  "Return the location of the agent.js file."
+  (if copilot--server-executable
+      copilot--server-executable
+    (setq copilot--server-executable
+          (let ((possible-paths
+                 (list
+                  (when (eq system-type 'windows-nt)
+                    (f-join copilot-install-dir "node_modules"
+                            "copilot-node-server" "copilot" "dist" "agent.js"))
+                  (f-join copilot-install-dir "lib" "node_modules"
+                          "copilot-node-server" "copilot" "dist" "agent.js")
+                  (f-join copilot-install-dir "lib64" "node_modules"
+                          "copilot-node-server" "copilot" "dist" "agent.js"))))
+            (seq-some
+             (lambda (path)
+               (when (and path (file-exists-p path))
+                 path))
+             possible-paths)))))
 
 ;; XXX: This function is modified from `lsp-mode'; see `lsp-async-start-process'
 ;; function for more information.
